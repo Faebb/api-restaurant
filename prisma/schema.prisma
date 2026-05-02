@@ -1,0 +1,107 @@
+// Kaizen Fusion — Prisma schema
+// Provider: MySQL — compatible with MySQL Workbench
+// Credentials are read exclusively from environment variables (never hardcoded)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Menu ──────────────────────────────────────────────────────────────────
+
+model MenuCategory {
+  id        String     @id @default(uuid()) @db.VarChar(36)
+  name      String     @db.VarChar(100)
+  type      String     @db.VarChar(50)   // ENTRADAS | SUSHI | SOPAS | PLATOS | TEMPURA | VEGETARIANO | BEBIDAS | POSTRES
+  sortOrder Int        @default(0)
+  items     MenuItem[]
+  createdAt DateTime   @default(now())
+
+  @@map("menu_categories")
+}
+
+model MenuItem {
+  id           String       @id @default(uuid()) @db.VarChar(36)
+  name         String       @db.VarChar(150)
+  description  String       @db.Text
+  price        Decimal      @db.Decimal(10, 2)  // Decimal para precisión monetaria
+  image        String       @db.VarChar(500)
+  category     String       @db.VarChar(50)     // mirrors MenuCategory.type for easy filtering
+  categoryId   String       @db.VarChar(36)
+  menuCategory MenuCategory @relation(fields: [categoryId], references: [id])
+  orderItems   OrderItem[]
+  createdAt    DateTime     @default(now())
+
+  @@index([categoryId])
+  @@map("menu_items")
+}
+
+// ─── Tables & Reservations ─────────────────────────────────────────────────
+
+model RestaurantTable {
+  id           String        @id @default(uuid()) @db.VarChar(36)
+  tableNumber  Int           @unique
+  tableType    String        @db.VarChar(10)  // LOW | HIGH | VIP
+  capacity     Int
+  isOccupied   Boolean       @default(false)
+  reservations Reservation[]
+
+  @@map("restaurant_tables")
+}
+
+model Reservation {
+  id        String          @id @default(uuid()) @db.VarChar(36)
+  guests    Int
+  waitTime  Int             // estimated wait in minutes
+  tableId   String          @db.VarChar(36)
+  table     RestaurantTable @relation(fields: [tableId], references: [id])
+  orders    Order[]
+  createdAt DateTime        @default(now())
+
+  @@index([tableId])
+  @@map("reservations")
+}
+
+// ─── Orders ────────────────────────────────────────────────────────────────
+
+model Order {
+  id             String       @id @default(uuid()) @db.VarChar(36)
+  reservationId  String?      @db.VarChar(36)
+  reservation    Reservation? @relation(fields: [reservationId], references: [id])
+  customerName   String       @db.VarChar(150)
+  documentType   String       @db.VarChar(20)
+  documentNumber String       @db.VarChar(30)
+  email          String       @db.VarChar(255)
+  paymentMethod  String       @db.VarChar(10)   // card | cash
+  tipType        String       @db.VarChar(10)   // fixed | custom
+  tipValue       Decimal      @db.Decimal(10, 2)
+  subtotal       Decimal      @db.Decimal(10, 2)
+  total          Decimal      @db.Decimal(10, 2)
+  status         String       @default("PENDING") @db.VarChar(20) // PENDING | CONFIRMED | PREPARING | DELIVERED | CANCELLED
+  items          OrderItem[]
+  createdAt      DateTime     @default(now())
+
+  @@index([reservationId])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id         String   @id @default(uuid()) @db.VarChar(36)
+  orderId    String   @db.VarChar(36)
+  order      Order    @relation(fields: [orderId], references: [id])
+  menuItemId String   @db.VarChar(36)
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id])
+  quantity   Int
+  unitPrice  Decimal  @db.Decimal(10, 2)
+  subtotal   Decimal  @db.Decimal(10, 2)
+  createdAt  DateTime @default(now())
+
+  @@index([orderId])
+  @@index([menuItemId])
+  @@map("order_items")
+}
