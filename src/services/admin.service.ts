@@ -214,4 +214,10 @@ export const adminReservationService = {
       include: { table: true },
     });
   },
+
+  async remove(tenantId: string, id: string) {
+    const existing = await prisma.reservation.findFirst({ where: { id, tenantId } });
+    if (!existing) throw new Error('Reserva no encontrada');
+    return prisma.reservation.delete({ where: { id } });
+  },
 };

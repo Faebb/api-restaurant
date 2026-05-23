@@ -47,5 +47,6 @@ router.patch('/orders/:id/status', validate(updateOrderStatusSchema), adminOrder
 
 // ─── Reservations ────────────────────────────────────────────────────────
 router.get('/reservations', adminReservationController.list);
+router.delete('/reservations/:id', adminReservationController.remove);
 
 export default router;

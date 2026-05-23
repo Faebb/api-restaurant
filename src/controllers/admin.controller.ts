@@ -228,4 +228,18 @@ export const adminReservationController = {
       next(err);
     }
   },
+
+  async remove(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await adminReservationService.remove(tenantOf(req), req.params.id as string);
+      res.status(204).send();
+    } catch (err) {
+      const m = err instanceof Error ? err.message : 'Error';
+      if (m.includes('no encontrada')) {
+        res.status(404).json({ success: false, error: m });
+        return;
+      }
+      next(err);
+    }
+  },
 };
