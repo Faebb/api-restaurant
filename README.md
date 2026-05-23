@@ -1,185 +1,190 @@
-# Kaizen Fusion API
+# Kaizen Fusion API — Multi-tenant SaaS
 
-REST API para el restaurante Kaizen Fusion. Construida con **Node.js + Express + TypeScript + Prisma ORM + MySQL**.
-
----
-
-## Endpoints
-
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| GET | `/health` | Health check |
-| GET | `/api/menu` | Todas las categorías con ítems |
-| GET | `/api/menu/items/:id` | Ítem de menú por ID |
-| POST | `/api/reservations` | Asignar mesa `{ guests: number }` |
-| POST | `/api/orders` | Crear orden con carrito + datos del cliente |
-| GET | `/api/orders/:id` | Consultar orden por ID |
+REST API for the Kaizen Fusion restaurant SaaS. **Node.js + Express +
+TypeScript + Prisma ORM + MySQL**. Each restaurant lives in its own row-level
+tenant; customers reach a restaurant via its URL slug, while owners manage
+their data through a JWT-protected admin surface.
 
 ---
 
-## Requisitos previos
+## Quickstart
 
-- Node.js ≥ 18
-- MySQL 8+ corriendo localmente (el mismo que usa MySQL Workbench)
-
----
-
-## Paso 1 — Crear la base de datos en MySQL Workbench
-
-Abre MySQL Workbench, conecta a tu servidor local y ejecuta:
-
-```sql
-CREATE DATABASE kaizen_fusion
-  CHARACTER SET utf8mb4
-  COLLATE utf8mb4_unicode_ci;
-```
-
----
-
-## Paso 2 — Configurar variables de entorno
+Prerequisites: Node.js ≥ 18 and a MySQL 8 database you can write to.
 
 ```bash
-cd kaizen-fusion-api
+cd api-restaurant
 cp .env.example .env
-```
+# Edit .env: set DATABASE_URL, JWT_SECRET, ALLOWED_ORIGINS
 
-Edita `.env` y pon tus credenciales reales de MySQL:
-
-```env
-DATABASE_URL="mysql://root:TU_PASSWORD@127.0.0.1:3306/kaizen_fusion"
-```
-
-> Las credenciales **nunca** deben estar escritas en el código — solo en `.env`.
-> Asegúrate de que `.env` esté en `.gitignore` (ya está incluido).
-
----
-
-## Paso 3 — Instalar dependencias y preparar la BD
-
-```bash
 npm install
-
-# Crea las tablas (ejecuta las migraciones de Prisma)
-npm run db:migrate
-
-# Carga el menú completo con datos iniciales
-npm run db:seed
+npm run db:migrate      # applies the baseline SaaS migration
+npm run db:seed         # creates one demo tenant + the full Kaizen menu
+npm run dev             # starts on http://localhost:3000
 ```
 
-Después del seed, puedes verificar los datos directamente en MySQL Workbench
-abriendo las tablas `menu_categories` y `menu_items` de la base `kaizen_fusion`.
+Demo credentials (created by the seed):
+
+- Tenant slug: `kaizen-fusion`
+- Owner: `owner@kaizenfusion.com` / `Owner123!`
+
+`curl http://localhost:3000/health` should return `{"status":"ok"...}`.
 
 ---
 
-## Paso 4 — Arrancar el servidor
+## Endpoint map
 
-```bash
-npm run dev
+| Group  | Method | Path | Auth |
+|--------|--------|------|------|
+| Health | GET    | `/health` | — |
+| Auth   | POST   | `/api/auth/register` | — |
+| Auth   | POST   | `/api/auth/login` | — |
+| Auth   | GET    | `/api/auth/me` | JWT |
+| Public | GET    | `/api/public/:slug/menu` | — |
+| Public | GET    | `/api/public/:slug/menu/items/:id` | — |
+| Public | POST   | `/api/public/:slug/reservations` | — |
+| Public | POST   | `/api/public/:slug/orders` | — |
+| Public | GET    | `/api/public/:slug/orders/:id` | — |
+| Admin  | GET    | `/api/admin/menu/categories` | JWT |
+| Admin  | POST   | `/api/admin/menu/categories` | JWT |
+| Admin  | PUT    | `/api/admin/menu/categories/:id` | JWT |
+| Admin  | DELETE | `/api/admin/menu/categories/:id` | JWT |
+| Admin  | GET    | `/api/admin/menu/items` | JWT |
+| Admin  | POST   | `/api/admin/menu/items` | JWT |
+| Admin  | PUT    | `/api/admin/menu/items/:id` | JWT |
+| Admin  | DELETE | `/api/admin/menu/items/:id` | JWT |
+| Admin  | GET    | `/api/admin/tables` | JWT |
+| Admin  | POST   | `/api/admin/tables` | JWT |
+| Admin  | PUT    | `/api/admin/tables/:id` | JWT |
+| Admin  | DELETE | `/api/admin/tables/:id` | JWT |
+| Admin  | GET    | `/api/admin/orders` | JWT |
+| Admin  | GET    | `/api/admin/orders/:id` | JWT |
+| Admin  | PATCH  | `/api/admin/orders/:id/status` | JWT |
+| Admin  | GET    | `/api/admin/reservations` | JWT |
+
+Full request / response examples in [CURLS.md](CURLS.md).
+
+---
+
+## Multi-tenancy model
+
+- Shared database, shared schema, `tenantId` discriminator column on every
+  domain table (`menu_categories`, `menu_items`, `restaurant_tables`,
+  `reservations`, `orders`).
+- The service layer enforces tenant isolation — every query filters by
+  `tenantId`. There is no cross-tenant access path.
+- Tenant resolution:
+  - **Public flow** (`/api/public/:slug/*`) — the `:slug` URL param is
+    looked up in `tenants.slug` by `resolveTenant` middleware; the resolved
+    `tenantId` is stamped on `req.tenantId` for the handler.
+  - **Admin flow** (`/api/admin/*`) — `requireAuth` verifies the JWT and
+    stamps `req.user = { userId, tenantId, role }`.
+- `RestaurantTable.tableNumber` is unique **per tenant** via the composite
+  unique index `@@unique([tenantId, tableNumber])`.
+
+---
+
+## Data model (Prisma)
+
+```
+Tenant ──┬── User[]              (OWNER, STAFF)
+         ├── MenuCategory[]      ─┐
+         ├── MenuItem[]          ─┤
+         ├── RestaurantTable[]    │  every row tagged tenantId
+         ├── Reservation[]       ─┤
+         └── Order[] ─ OrderItem[]┘
 ```
 
-La API estará en `http://localhost:3000`. Prueba el health check:
+See [`prisma/schema.prisma`](prisma/schema.prisma) for the full source of
+truth. Enum-like fields are stored as `VARCHAR` columns with the allowed
+values documented in `//` comments next to the field.
+
+---
+
+## Auth
+
+- `bcryptjs` for password hashing (cross-platform safe).
+- JWT signed with `JWT_SECRET`, expires after `JWT_EXPIRES_IN` (default
+  `7d`). Payload is `{ userId, tenantId, role }`.
+- `register` runs inside a Prisma transaction so a Tenant is never created
+  without its OWNER user. The slug is derived from the restaurant name; on
+  collision a random suffix is appended.
+- `requireAuth` middleware reads `Authorization: Bearer <token>` and
+  responds **401** on missing or invalid tokens.
+
+---
+
+## Environment variables
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `PORT` | HTTP port | `3000` |
+| `NODE_ENV` | `development` / `production` | `development` |
+| `DATABASE_URL` | MySQL connection string | `mysql://u:p@host:3306/kaizen_saas` |
+| `ALLOWED_ORIGINS` | Comma-separated CORS origins | `http://localhost:5173` |
+| `JWT_SECRET` | Signing secret (long random string) | `<48 random hex bytes>` |
+| `JWT_EXPIRES_IN` | Token TTL | `7d` |
+
+> `.env` is gitignored. Never commit credentials.
+
+---
+
+## Scripts
 
 ```bash
-curl http://localhost:3000/health
-# → {"status":"ok","timestamp":"..."}
+npm run dev              # tsx watch — hot reload
+npm run build            # tsc → dist/
+npm run start            # node dist/server.js
+npm run db:generate      # prisma generate
+npm run db:migrate       # prisma migrate dev (interactive — local only)
+npm run db:migrate:prod  # prisma migrate deploy (non-interactive — CI/prod)
+npm run db:seed          # tsx prisma/seed.ts
+npm run db:studio        # GUI for the database
+npm run db:reset         # nuke + migrate + seed (dev only)
 ```
 
 ---
 
-## Scripts disponibles
+## Connecting the frontend
 
-```bash
-npm run dev              # Servidor con hot-reload (desarrollo)
-npm run build            # Compila TypeScript → dist/
-npm run start            # Ejecuta el build compilado (producción)
-npm run db:migrate       # Aplica migraciones (crea/modifica tablas)
-npm run db:migrate:prod  # Aplica migraciones en producción (sin prompts)
-npm run db:seed          # Inserta datos iniciales (menú + mesas)
-npm run db:studio        # Abre Prisma Studio — GUI visual de la BD
-npm run db:reset         # Borra todo y vuelve a hacer seed (dev only)
-```
-
----
-
-## Conectar el frontend
-
-En el `.env` del frontend (`kaizen-fusion-main`), cambia:
+The companion frontend (`kaizen-fusion`) expects the API base URL in its own
+`.env`:
 
 ```env
 VITE_API_KAIZEN=http://localhost:3000
 ```
 
-Luego reemplaza los mocks en los servicios del frontend:
-
-```ts
-// src/features/menu/services/menu-service.ts
-import { httpClient } from '@/services'
-
-export const getMenuService = async () => {
-  const { data } = await httpClient.get('/api/menu')
-  return data.data
-}
-
-// src/features/reservation/services/reservation-service.ts
-export const assignTableService = async (body: ReservationRequestType) => {
-  const { data } = await httpClient.post('/api/reservations', body)
-  return data.data
-}
-
-// src/features/payment/hooks/use-checkout-form.ts — en onSubmit:
-export const createOrderService = async (body: CreateOrderDTO) => {
-  const { data } = await httpClient.post('/api/orders', body)
-  return data.data
-}
-```
+The frontend axios client attaches `Authorization: Bearer <token>` from its
+Zustand auth store and consumes the same `{ success, data }` / `{ success,
+error }` envelope used here.
 
 ---
 
-## Despliegue en producción (sin Docker)
-
-### Railway (recomendado — tier gratuito disponible)
-
-1. Sube la carpeta `kaizen-fusion-api` a un repositorio GitHub.
-2. En [railway.app](https://railway.app) → New Project → Deploy from GitHub.
-3. Agrega un plugin **MySQL** desde el dashboard de Railway.
-4. Configura las variables de entorno:
-   ```
-   DATABASE_URL=mysql://...  ← Railway lo provee automáticamente
-   ALLOWED_ORIGINS=https://tu-frontend.vercel.app
-   NODE_ENV=production
-   ```
-5. Railway detecta el `package.json` y despliega automáticamente.
-
-### Render
-
-1. Sube a GitHub.
-2. En [render.com](https://render.com) → New → Web Service.
-3. Configura:
-   - **Build Command:** `npm install && npx prisma generate && npm run build`
-   - **Start Command:** `npx prisma migrate deploy && node dist/server.js`
-4. Agrega variables de entorno en el dashboard.
-
----
-
-## Estructura del proyecto
+## Layout
 
 ```
-kaizen-fusion-api/
+api-restaurant/
 ├── prisma/
-│   ├── schema.prisma      # Schema MySQL con tipos explícitos
-│   └── seed.ts            # Datos iniciales (menú + mesas)
+│   ├── schema.prisma                # source of truth
+│   ├── migrations/
+│   │   └── 20260522120000_initial_saas_schema/migration.sql
+│   └── seed.ts                      # demo tenant + Kaizen menu + tables
 ├── src/
 │   ├── config/
-│   │   └── database.ts    # Prisma client (singleton)
-│   ├── controllers/       # Manejo de requests HTTP
-│   ├── middleware/        # Validación (Zod) + error handler
-│   ├── routes/            # Routers de Express
-│   ├── schemas/           # Schemas Zod por endpoint
-│   ├── services/          # Lógica de negocio + acceso a BD
-│   ├── types/             # Tipos TypeScript compartidos
-│   ├── app.ts             # Configuración de Express
-│   └── server.ts          # Entry point + graceful shutdown
-├── .env                   # Variables locales (no subir a git)
-├── .env.example           # Plantilla de variables
+│   │   ├── database.ts              # Prisma singleton
+│   │   └── jwt.ts                   # sign/verify helpers
+│   ├── controllers/                 # request handlers
+│   ├── middleware/
+│   │   ├── auth.middleware.ts       # requireAuth (JWT)
+│   │   ├── tenant.middleware.ts     # resolveTenant (slug)
+│   │   ├── validate.middleware.ts   # Zod factory
+│   │   └── error.middleware.ts
+│   ├── routes/                      # Express routers
+│   ├── schemas/                     # Zod schemas
+│   ├── services/                    # business logic + Prisma queries
+│   ├── types/
+│   ├── app.ts                       # Express app wiring
+│   └── server.ts                    # entry point
+├── .env                             # gitignored
+├── .env.example
 └── tsconfig.json
 ```
