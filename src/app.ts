@@ -7,8 +7,10 @@ import menuRoutes from './routes/menu.routes';
 import reservationRoutes from './routes/reservation.routes';
 import orderRoutes from './routes/order.routes';
 import authRoutes from './routes/auth.routes';
+import adminRoutes from './routes/admin.routes';
 import { errorHandler, notFoundHandler } from './middleware/error.middleware';
 import { resolveTenant } from './middleware/tenant.middleware';
+import { requireAuth } from './middleware/auth.middleware';
 
 const app = express();
 
@@ -47,6 +49,9 @@ app.get('/health', (_req, res) => {
 
 // ─── Auth (tenant comes from the JWT) ────────────────────────────────────────
 app.use('/api/auth', authRoutes);
+
+// ─── Admin (JWT-protected, tenant from req.user) ─────────────────────────────
+app.use('/api/admin', requireAuth, adminRoutes);
 
 // ─── Public customer flow (tenant comes from the :slug URL param) ────────────
 const publicRouter = Router({ mergeParams: true });
