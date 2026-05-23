@@ -2,21 +2,13 @@ import { prisma } from '../config/database';
 import type { CreateOrderInput } from '../schemas/order.schema';
 import type { OrderResponseDTO } from '../types/api.types';
 
-// Helper: Prisma Decimal → JavaScript number (needed for MySQL Decimal columns)
 const toNum = (v: unknown): number => Number(v);
 
 export const orderService = {
-  /**
-   * Creates an order.
-   * - Prices are always taken from the DB — never from the client (prevents price tampering).
-   * - All arithmetic uses Number() to handle Prisma Decimal objects returned by MySQL.
-   * - Order items + order are persisted in a single transaction.
-   */
-  async create(input: CreateOrderInput): Promise<OrderResponseDTO> {
-    // Fetch all requested menu items in one query
+  async create(tenantId: string, input: CreateOrderInput): Promise<OrderResponseDTO> {
     const menuItemIds = input.items.map((i) => i.menuItemId);
     const menuItems = await prisma.menuItem.findMany({
-      where: { id: { in: menuItemIds } },
+      where: { id: { in: menuItemIds }, tenantId },
     });
 
     if (menuItems.length !== menuItemIds.length) {
@@ -25,7 +17,6 @@ export const orderService = {
       throw new Error(`Ítem(s) de menú no encontrado(s): ${missing.join(', ')}`);
     }
 
-    // Build order items with prices from DB (never trust client-side prices)
     const orderItemsData = input.items.map((inputItem) => {
       const menuItem = menuItems.find((m) => m.id === inputItem.menuItemId)!;
       const unitPrice = toNum(menuItem.price);
@@ -42,6 +33,7 @@ export const orderService = {
 
     const order = await prisma.order.create({
       data: {
+        tenantId,
         reservationId: input.reservationId ?? null,
         customerName: input.customerName,
         documentType: input.documentType,
@@ -53,14 +45,10 @@ export const orderService = {
         subtotal,
         total,
         status: 'PENDING',
-        items: {
-          create: orderItemsData,
-        },
+        items: { create: orderItemsData },
       },
       include: {
-        items: {
-          include: { menuItem: { select: { name: true } } },
-        },
+        items: { include: { menuItem: { select: { name: true } } } },
       },
     });
 
@@ -84,17 +72,10 @@ export const orderService = {
     };
   },
 
-  /**
-   * Returns a single order by ID.
-   */
-  async getById(id: string): Promise<OrderResponseDTO | null> {
-    const order = await prisma.order.findUnique({
-      where: { id },
-      include: {
-        items: {
-          include: { menuItem: { select: { name: true } } },
-        },
-      },
+  async getById(tenantId: string, id: string): Promise<OrderResponseDTO | null> {
+    const order = await prisma.order.findFirst({
+      where: { id, tenantId },
+      include: { items: { include: { menuItem: { select: { name: true } } } } },
     });
 
     if (!order) return null;

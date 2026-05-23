@@ -2,11 +2,9 @@ import { prisma } from '../config/database';
 import type { MenuCategoryDTO, MenuItemDTO } from '../types/api.types';
 
 export const menuService = {
-  /**
-   * Returns all menu categories, each with their items sorted by name.
-   */
-  async getAll(): Promise<MenuCategoryDTO[]> {
+  async getAll(tenantId: string): Promise<MenuCategoryDTO[]> {
     const categories = await prisma.menuCategory.findMany({
+      where: { tenantId },
       orderBy: { sortOrder: 'asc' },
       include: {
         items: { orderBy: { name: 'asc' } },
@@ -21,25 +19,22 @@ export const menuService = {
         id: item.id,
         name: item.name,
         description: item.description,
-        price: Number(item.price), // Prisma Decimal → number
+        price: Number(item.price),
         image: item.image,
         category: item.category as MenuItemDTO['category'],
       })),
     }));
   },
 
-  /**
-   * Returns a single menu item by ID.
-   */
-  async getItemById(id: string): Promise<MenuItemDTO | null> {
-    const item = await prisma.menuItem.findUnique({ where: { id } });
+  async getItemById(tenantId: string, id: string): Promise<MenuItemDTO | null> {
+    const item = await prisma.menuItem.findFirst({ where: { id, tenantId } });
     if (!item) return null;
 
     return {
       id: item.id,
       name: item.name,
       description: item.description,
-      price: Number(item.price), // Prisma Decimal → number
+      price: Number(item.price),
       image: item.image,
       category: item.category as MenuItemDTO['category'],
     };

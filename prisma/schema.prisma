@@ -1,6 +1,5 @@
-// Kaizen Fusion — Prisma schema
-// Provider: MySQL — compatible with MySQL Workbench
-// Credentials are read exclusively from environment variables (never hardcoded)
+// Kaizen Fusion — Prisma schema (multi-tenant SaaS)
+// Provider: MySQL. Credentials are read exclusively from environment variables.
 
 generator client {
   provider = "prisma-client-js"
@@ -11,31 +10,71 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─── Tenants & Users ───────────────────────────────────────────────────────
+
+model Tenant {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  name      String   @db.VarChar(150)
+  slug      String   @unique @db.VarChar(120)
+  plan      String   @default("FREE") @db.VarChar(20)    // FREE | PRO
+  status    String   @default("ACTIVE") @db.VarChar(20)  // ACTIVE | SUSPENDED
+  createdAt DateTime @default(now())
+
+  users            User[]
+  menuCategories   MenuCategory[]
+  menuItems        MenuItem[]
+  restaurantTables RestaurantTable[]
+  reservations     Reservation[]
+  orders           Order[]
+
+  @@map("tenants")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.VarChar(36)
+  tenantId     String   @db.VarChar(36)
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  email        String   @unique @db.VarChar(255)
+  passwordHash String   @db.VarChar(255)
+  name         String   @db.VarChar(150)
+  role         String   @default("OWNER") @db.VarChar(20)  // OWNER | STAFF
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId])
+  @@map("users")
+}
+
 // ─── Menu ──────────────────────────────────────────────────────────────────
 
 model MenuCategory {
   id        String     @id @default(uuid()) @db.VarChar(36)
+  tenantId  String     @db.VarChar(36)
+  tenant    Tenant     @relation(fields: [tenantId], references: [id])
   name      String     @db.VarChar(100)
   type      String     @db.VarChar(50)   // ENTRADAS | SUSHI | SOPAS | PLATOS | TEMPURA | VEGETARIANO | BEBIDAS | POSTRES
   sortOrder Int        @default(0)
   items     MenuItem[]
   createdAt DateTime   @default(now())
 
+  @@index([tenantId])
   @@map("menu_categories")
 }
 
 model MenuItem {
   id           String       @id @default(uuid()) @db.VarChar(36)
+  tenantId     String       @db.VarChar(36)
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
   name         String       @db.VarChar(150)
   description  String       @db.Text
-  price        Decimal      @db.Decimal(10, 2)  // Decimal para precisión monetaria
+  price        Decimal      @db.Decimal(10, 2)
   image        String       @db.VarChar(500)
-  category     String       @db.VarChar(50)     // mirrors MenuCategory.type for easy filtering
+  category     String       @db.VarChar(50)
   categoryId   String       @db.VarChar(36)
   menuCategory MenuCategory @relation(fields: [categoryId], references: [id])
   orderItems   OrderItem[]
   createdAt    DateTime     @default(now())
 
+  @@index([tenantId])
   @@index([categoryId])
   @@map("menu_items")
 }
@@ -44,24 +83,31 @@ model MenuItem {
 
 model RestaurantTable {
   id           String        @id @default(uuid()) @db.VarChar(36)
-  tableNumber  Int           @unique
+  tenantId     String        @db.VarChar(36)
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+  tableNumber  Int
   tableType    String        @db.VarChar(10)  // LOW | HIGH | VIP
   capacity     Int
   isOccupied   Boolean       @default(false)
   reservations Reservation[]
 
+  @@unique([tenantId, tableNumber])
+  @@index([tenantId])
   @@map("restaurant_tables")
 }
 
 model Reservation {
   id        String          @id @default(uuid()) @db.VarChar(36)
+  tenantId  String          @db.VarChar(36)
+  tenant    Tenant          @relation(fields: [tenantId], references: [id])
   guests    Int
-  waitTime  Int             // estimated wait in minutes
+  waitTime  Int
   tableId   String          @db.VarChar(36)
   table     RestaurantTable @relation(fields: [tableId], references: [id])
   orders    Order[]
   createdAt DateTime        @default(now())
 
+  @@index([tenantId])
   @@index([tableId])
   @@map("reservations")
 }
@@ -70,6 +116,8 @@ model Reservation {
 
 model Order {
   id             String       @id @default(uuid()) @db.VarChar(36)
+  tenantId       String       @db.VarChar(36)
+  tenant         Tenant       @relation(fields: [tenantId], references: [id])
   reservationId  String?      @db.VarChar(36)
   reservation    Reservation? @relation(fields: [reservationId], references: [id])
   customerName   String       @db.VarChar(150)
@@ -85,6 +133,7 @@ model Order {
   items          OrderItem[]
   createdAt      DateTime     @default(now())
 
+  @@index([tenantId])
   @@index([reservationId])
   @@index([status])
   @@map("orders")

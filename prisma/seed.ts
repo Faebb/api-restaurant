@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
@@ -12,6 +13,31 @@ async function main() {
   await prisma.restaurantTable.deleteMany();
   await prisma.menuItem.deleteMany();
   await prisma.menuCategory.deleteMany();
+  await prisma.user.deleteMany();
+  await prisma.tenant.deleteMany();
+
+  // ─── Demo Tenant + Owner ─────────────────────────────────────────────────
+  const tenant = await prisma.tenant.create({
+    data: {
+      id: 'tenant-kaizen',
+      name: 'Kaizen Fusion',
+      slug: 'kaizen-fusion',
+      plan: 'FREE',
+      status: 'ACTIVE',
+    },
+  });
+
+  const passwordHash = await bcrypt.hash('Owner123!', 10);
+  await prisma.user.create({
+    data: {
+      tenantId: tenant.id,
+      email: 'owner@kaizenfusion.com',
+      passwordHash,
+      name: 'Kaizen Owner',
+      role: 'OWNER',
+    },
+  });
+  console.log(`  ✓ tenant "${tenant.slug}" + owner user seeded`);
 
   // ─── Menu Categories & Items ─────────────────────────────────────────────
   const categories = [
@@ -109,12 +135,14 @@ async function main() {
     await prisma.menuCategory.create({
       data: {
         id: cat.id,
+        tenantId: tenant.id,
         name: cat.name,
         type: cat.type,
         sortOrder: cat.sortOrder,
         items: {
           create: cat.items.map((item) => ({
             id: item.id,
+            tenantId: tenant.id,
             name: item.name,
             description: item.description,
             price: item.price,
@@ -131,25 +159,25 @@ async function main() {
 
   // ─── Restaurant Tables ────────────────────────────────────────────────────
   const tables = [
-    // LOW tables (2-4 guests)
     { tableNumber: 1, tableType: 'LOW', capacity: 2 },
     { tableNumber: 2, tableType: 'LOW', capacity: 2 },
     { tableNumber: 3, tableType: 'LOW', capacity: 4 },
     { tableNumber: 4, tableType: 'LOW', capacity: 4 },
     { tableNumber: 5, tableType: 'LOW', capacity: 4 },
-    // HIGH tables (5-8 guests)
     { tableNumber: 6, tableType: 'HIGH', capacity: 6 },
     { tableNumber: 7, tableType: 'HIGH', capacity: 6 },
     { tableNumber: 8, tableType: 'HIGH', capacity: 8 },
-    // VIP tables (9-10 guests)
     { tableNumber: 9, tableType: 'VIP', capacity: 10 },
     { tableNumber: 10, tableType: 'VIP', capacity: 10 },
   ];
 
-  await prisma.restaurantTable.createMany({ data: tables });
+  await prisma.restaurantTable.createMany({
+    data: tables.map((t) => ({ ...t, tenantId: tenant.id })),
+  });
   console.log(`  ✓ ${tables.length} tables seeded`);
 
   console.log('✅ Seed complete!');
+  console.log('   Demo login: owner@kaizenfusion.com / Owner123!');
 }
 
 main()

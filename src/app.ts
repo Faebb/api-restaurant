@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Router } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -6,7 +6,9 @@ import morgan from 'morgan';
 import menuRoutes from './routes/menu.routes';
 import reservationRoutes from './routes/reservation.routes';
 import orderRoutes from './routes/order.routes';
+import authRoutes from './routes/auth.routes';
 import { errorHandler, notFoundHandler } from './middleware/error.middleware';
+import { resolveTenant } from './middleware/tenant.middleware';
 
 const app = express();
 
@@ -21,7 +23,6 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? 'http://localhost:5173')
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g., Postman, server-to-server)
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
       callback(new Error(`CORS: origin not allowed — ${origin}`));
@@ -44,10 +45,15 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ─── API Routes ───────────────────────────────────────────────────────────────
-app.use('/api/menu', menuRoutes);
-app.use('/api/reservations', reservationRoutes);
-app.use('/api/orders', orderRoutes);
+// ─── Auth (tenant comes from the JWT) ────────────────────────────────────────
+app.use('/api/auth', authRoutes);
+
+// ─── Public customer flow (tenant comes from the :slug URL param) ────────────
+const publicRouter = Router({ mergeParams: true });
+publicRouter.use('/menu', menuRoutes);
+publicRouter.use('/reservations', reservationRoutes);
+publicRouter.use('/orders', orderRoutes);
+app.use('/api/public/:slug', resolveTenant, publicRouter);
 
 // ─── Error handling ───────────────────────────────────────────────────────────
 app.use(notFoundHandler);
