@@ -1,4 +1,5 @@
 import { prisma } from '../config/database';
+import { getIO } from '../config/socket';
 import type {
   CreateCategoryInput,
   UpdateCategoryInput,
@@ -200,6 +201,8 @@ export const adminOrderService = {
     const existing = await prisma.order.findFirst({ where: { id, tenantId } });
     if (!existing) throw new Error('Orden no encontrada');
     const updated = await prisma.order.update({ where: { id }, data: { status } });
+    const payload = { id: updated.id, status: updated.status, tenantId };
+    try { getIO().to(`tenant:${tenantId}`).emit('order:status-updated', payload); } catch { /* socket not ready */ }
     return { id: updated.id, status: updated.status };
   },
 };

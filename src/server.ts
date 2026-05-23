@@ -1,16 +1,20 @@
 import 'dotenv/config';
+import { createServer } from 'http';
 import app from './app';
 import { prisma } from './config/database';
+import { initSocket } from './config/socket';
 
 const PORT = Number(process.env.PORT) || 3000;
 
 async function bootstrap() {
   try {
-    // Verify DB connection on startup
     await prisma.$connect();
     console.log('✅ Database connected');
 
-    app.listen(PORT, () => {
+    const httpServer = createServer(app);
+    initSocket(httpServer);
+
+    httpServer.listen(PORT, () => {
       console.log(`🚀 Kaizen Fusion API running on http://localhost:${PORT}`);
       console.log(`   Health: http://localhost:${PORT}/health`);
       console.log(`   Env:    ${process.env.NODE_ENV ?? 'development'}`);
@@ -22,7 +26,6 @@ async function bootstrap() {
   }
 }
 
-// Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received — shutting down gracefully');
   await prisma.$disconnect();

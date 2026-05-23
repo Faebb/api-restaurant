@@ -1,4 +1,5 @@
 import { prisma } from '../config/database';
+import { getIO } from '../config/socket';
 import type { CreateOrderInput } from '../schemas/order.schema';
 import type { OrderResponseDTO } from '../types/api.types';
 
@@ -52,7 +53,7 @@ export const orderService = {
       },
     });
 
-    return {
+    const result: OrderResponseDTO = {
       id: order.id,
       customerName: order.customerName,
       email: order.email,
@@ -70,6 +71,10 @@ export const orderService = {
         subtotal: toNum(item.subtotal),
       })),
     };
+
+    try { getIO().to(`tenant:${tenantId}`).emit('order:created', result); } catch { /* socket not ready */ }
+
+    return result;
   },
 
   async getById(tenantId: string, id: string): Promise<OrderResponseDTO | null> {
